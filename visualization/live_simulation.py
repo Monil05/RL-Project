@@ -51,15 +51,21 @@ def render_live_intersection(
         _lane_markings(lane_count, road_width),
         _traffic_lights(
             environment.signal.current_phase,
-            environment.signal.active_direction if environment.signal.green_directions() else None,
+            environment.signal.active_direction,
             road_width,
         ),
         _queued_vehicles(environment, lane_count),
         _moving_vehicles(active_movements, lane_count),
-        _browser_animation_script(),
         "</svg>",
     ]
-    return "".join(svg_parts)
+    svg = "".join(svg_parts)
+    return (
+        "<!DOCTYPE html><html><head><style>"
+        "html,body{margin:0;padding:0;overflow:hidden;background:#eef2f3;}"
+        "</style></head><body>"
+        + svg
+        + "</body></html>"
+    )
 
 
 def _road_shapes(road_width: int) -> str:
@@ -115,7 +121,7 @@ def _traffic_lights(phase: SignalPhase, active_direction: str | None, road_width
     )
 
 
-def _light_color(phase: SignalPhase, active_direction: str, direction: str) -> str:
+def _light_color(phase: SignalPhase, active_direction: str | None, direction: str) -> str:
     if phase == SignalPhase.ALL_RED:
         return "#e63946"
     if phase == SignalPhase.YELLOW:
@@ -162,8 +168,7 @@ def _moving_vehicles(active_movements: list[dict[str, str | float | int]], lane_
         lane_index = int(movement["lane_index"])
         progress = float(movement["progress"])
         x, y, angle = _route_pose(direction, turn, lane_index, progress, lane_count)
-        target = _route_pose(direction, turn, lane_index, min(1.0, progress + 0.24), lane_count)
-        vehicles.append(_vehicle_shape(x, y, angle, turn, queued=False, target=target))
+        vehicles.append(_vehicle_shape(x, y, angle, turn, queued=False))
     return "".join(vehicles)
 
 
@@ -183,13 +188,13 @@ def _route_pose(
     direction: str, movement: Movement, lane_index: int, progress: float, lane_count: int
 ) -> tuple[float, float, float]:
     start = _route_start(direction, lane_index, lane_count)
-    end = _route_end(direction, movement, lane_count)
+    end = _route_end(direction, movement, lane_index, lane_count)
     if movement == Movement.STRAIGHT:
         x, y = _lerp_point(start, end, progress)
         angle = _approach_angle(direction)
         return x, y, angle
 
-    control = _turn_control(direction, movement, lane_count)
+    control = _turn_control(direction, movement, lane_index, lane_count)
     x, y = _quadratic_point(start, control, end, progress)
     tangent_x = 2 * (1 - progress) * (control[0] - start[0]) + 2 * progress * (end[0] - control[0])
     tangent_y = 2 * (1 - progress) * (control[1] - start[1]) + 2 * progress * (end[1] - control[1])
@@ -197,9 +202,9 @@ def _route_pose(
     return x, y, angle
 
 
-def _turn_control(direction: str, movement: Movement, lane_count: int) -> tuple[float, float]:
+def _turn_control(direction: str, movement: Movement, lane_index: int, lane_count: int) -> tuple[float, float]:
     """Keep the turn arc on the vehicle's left-traffic side of the junction."""
-    radius = 58 if lane_count == 2 else 76
+    radius = 58 if lane_count == 2 else 50 + lane_index * 36
     if direction == "north":
         return (CENTER - radius, CENTER - radius) if movement == Movement.LEFT else (CENTER + radius, CENTER - radius)
     if direction == "south":
@@ -221,9 +226,9 @@ def _route_start(direction: str, lane_index: int, lane_count: int) -> tuple[floa
     return CENTER - stop_offset, CENTER - incoming_offset
 
 
-def _route_end(direction: str, movement: Movement, lane_count: int) -> tuple[float, float]:
+def _route_end(direction: str, movement: Movement, lane_index: int, lane_count: int) -> tuple[float, float]:
     destination = _destination_direction(direction, movement)
-    exit_offset = 36 if lane_count == 2 else 42
+    exit_offset = 36 if lane_count == 2 else 42 + lane_index * 34
     if destination == "north":
         return CENTER - exit_offset, 40
     if destination == "south":
@@ -244,13 +249,13 @@ def _destination_direction(direction: str, movement: Movement) -> str:
 
 
 def _approach_angle(direction: str) -> float:
-    return {"north": 90.0, "south": 270.0, "east": 180.0, "west": 0.0}[direction]
+    return {"north": 270.0, "south": 90.0, "east": 0.0, "west": 180.0}[direction]
 
 
 def _screen_angle(dx: float, dy: float) -> float:
     import math
 
-    return math.degrees(math.atan2(dy, dx))
+    return math.degrees(math.atan2(dy, dx)) + 180.0
 
 
 def _lerp_point(start: tuple[float, float], end: tuple[float, float], progress: float) -> tuple[float, float]:
@@ -272,29 +277,12 @@ def _vehicle_shape(
     angle: float,
     movement: Movement,
     queued: bool,
-    target: tuple[float, float, float] | None = None,
 ) -> str:
     opacity = "0.95" if queued else "1.0"
     label = {"left": "L", "straight": "S", "right": "R"}[movement.value]
-    data = ""
-    if target is not None:
-        data = (
-            f" data-start-x='{x:.3f}' data-start-y='{y:.3f}' data-start-angle='{angle:.3f}'"
-            f" data-end-x='{target[0]:.3f}' data-end-y='{target[1]:.3f}' data-end-angle='{target[2]:.3f}'"
-        )
     return (
-        f"<g class='vehicle' opacity='{opacity}' aria-label='vehicle {label}'{data} transform='translate({x - 18:.2f} {y - 18:.2f}) rotate({angle:.2f} 18 18)'>"
+        f"<g class='vehicle' opacity='{opacity}' aria-label='vehicle {label}'"
+        f" transform='translate({x - 18:.2f} {y - 18:.2f}) rotate({angle:.2f} 18 18)'>"
         f"<image href='{CAR_DATA_URI}' x='0' y='0' width='36' height='36' preserveAspectRatio='xMidYMid meet'/>"
         f"<text x='0' y='0' opacity='0' aria-hidden='true'>{label}</text></g>"
-    )
-
-
-def _browser_animation_script() -> str:
-    return (
-        "<script><![CDATA[(function(){const cars=[...document.querySelectorAll('[data-end-x]')];"
-        "const start=performance.now();function frame(now){const t=Math.min(1,(now-start)/240),q=t*t*(3-2*t);"
-        "cars.forEach(car=>{const sx=+car.dataset.startX,sy=+car.dataset.startY,sa=+car.dataset.startAngle;"
-        "const ex=+car.dataset.endX,ey=+car.dataset.endY,ea=+car.dataset.endAngle;"
-        "car.setAttribute('transform',`translate(${sx+(ex-sx)*q-18} ${sy+(ey-sy)*q-18}) rotate(${sa+(ea-sa)*q} 18 18)`);});"
-        "if(t<1)requestAnimationFrame(frame);}requestAnimationFrame(frame);})();]]></script>"
     )
