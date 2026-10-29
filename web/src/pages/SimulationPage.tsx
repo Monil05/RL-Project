@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { LampPhase } from "../simulation/signalPlayback";
 import { Pause, Play, RotateCcw } from "lucide-react";
 import { Button, Card, ErrorText, Field, Notice, Stat, fieldClass, formatNumber } from "../components/ui";
 import { useSimulation } from "../context/SimulationContext";
@@ -15,7 +16,9 @@ export function SimulationPage() {
   const [duration, setDuration] = useState(120);
   const [seed, setSeed] = useState(42);
   const [speed, setSpeed] = useState(1);
+  const [arrivalScale, setArrivalScale] = useState(4);
   const [pending, setPending] = useState(false);
+  const [lamp, setLamp] = useState<LampPhase | null>(null);
 
   async function apply(startAfter: boolean) {
     setPending(true);
@@ -27,6 +30,7 @@ export function SimulationPage() {
       duration_seconds: duration,
       seed,
       speed,
+      arrival_scale: arrivalScale,
     });
     if (configured && startAfter) await send("/api/simulation/start");
     setPending(false);
@@ -37,11 +41,13 @@ export function SimulationPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold">Simulation</h1>
-        <p className="mt-1 text-sm text-slate-600">Playback steps the existing Python environment. Vehicle motion between steps is visual only.</p>
+        <p className="mt-1 text-sm text-slate-600">
+          Playback steps the existing Python environment. Busy traffic adds more arrivals so queues form on red. Training still uses the original scenario rates.
+        </p>
       </div>
       {error ? <ErrorText>{error}</ErrorText> : null}
       {algorithm !== "Fixed Time" ? (
-        <Notice>Q-Learning and SARSA need a completed training job for the same scenario and lane layout. Train one before starting.</Notice>
+        <Notice>Q-Learning and SARSA need a completed training job for the same scenario and lane layout. Use Original density to match that training traffic.</Notice>
       ) : null}
       <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
         <Card title="Controls">
@@ -56,6 +62,13 @@ export function SimulationPage() {
             <Field label="Traffic scenario">
               <select className={fieldClass} value={scenario} onChange={(event) => setScenario(event.target.value)}>
                 {SCENARIOS.map((name) => <option key={name}>{name}</option>)}
+              </select>
+            </Field>
+            <Field label="Traffic density">
+              <select className={fieldClass} value={arrivalScale} onChange={(event) => setArrivalScale(Number(event.target.value))}>
+                <option value={1}>Original</option>
+                <option value={2.5}>Steady</option>
+                <option value={4}>Busy</option>
               </select>
             </Field>
             <Field label="Lanes">
@@ -82,6 +95,7 @@ export function SimulationPage() {
                   duration_seconds: state?.duration_seconds ?? duration,
                   seed: state?.seed ?? seed,
                   speed: next,
+                  arrival_scale: state?.arrival_scale ?? arrivalScale,
                 });
               }} />
             </Field>
@@ -99,16 +113,17 @@ export function SimulationPage() {
         </Card>
         <div className="space-y-4">
           <Card title={`${state?.algorithm ?? "Controller"} · ${state?.scenario ?? "scenario"}`}>
-            <IntersectionCanvas state={state} />
+            <IntersectionCanvas state={state} onLamp={setLamp} />
             <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
-              <div>Phase: {state?.signal?.phase ?? "Unavailable"}</div>
-              <div>Active approach: {state?.signal?.active_direction ?? "None"}</div>
+              <div>Phase: {lamp?.phase ?? state?.signal?.phase ?? "Unavailable"}</div>
+              <div>Active approach: {lamp?.active ?? state?.signal?.active_direction ?? "None"}</div>
               <div>Step {state?.step_index ?? 0}</div>
             </div>
           </Card>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Stat label="Time" value={metrics ? `${metrics.time}s` : "Unavailable"} />
             <Stat label="Avg wait" value={formatNumber(metrics?.average_waiting_time)} />
+            <Stat label="Vehicles waiting" value={state?.vehicles_in_network != null ? String(state.vehicles_in_network) : "Unavailable"} />
             <Stat label="Throughput" value={metrics ? String(metrics.throughput) : "Unavailable"} />
             <Stat label="Switches" value={metrics ? String(metrics.number_of_switches) : "Unavailable"} />
           </div>

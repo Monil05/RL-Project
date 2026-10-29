@@ -37,8 +37,11 @@ def build_config(
     epsilon: float | None = None,
     epsilon_decay: float | None = None,
     minimum_epsilon: float | None = None,
+    arrival_scale: float = 1.0,
 ) -> ProjectConfig:
     require_scenario(scenario)
+    if arrival_scale < 1 or arrival_scale > 6:
+        raise ApiError(422, "Arrival scale must be between 1 and 6.")
     if lane_count not in (2, 4):
         raise ApiError(422, "Lane count must be 2 or 4.")
     if duration_seconds < 1 or duration_seconds > 3600:
@@ -60,9 +63,15 @@ def build_config(
     if overrides:
         learning = replace(learning, **overrides)
 
+    base_rates = dict(TRAFFIC_SCENARIOS[scenario])
+    arrival_rates = (
+        base_rates
+        if arrival_scale == 1
+        else {direction: min(0.85, rate * arrival_scale) for direction, rate in base_rates.items()}
+    )
     simulation = replace(
         DEFAULT_CONFIG.simulation,
-        arrival_rates=dict(TRAFFIC_SCENARIOS[scenario]),
+        arrival_rates=arrival_rates,
         lane_count=lane_count,
         free_left_turn=free_left_turn,
         duration_seconds=duration_seconds,

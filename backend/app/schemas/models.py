@@ -11,6 +11,7 @@ class SimulationConfigRequest(BaseModel):
     duration_seconds: int = Field(300, ge=1, le=3600)
     seed: int = Field(42, ge=0, le=2_147_483_647)
     speed: float = Field(1.0, ge=0.25, le=4.0)
+    arrival_scale: float = Field(1.0, ge=1.0, le=6.0)
     agent_job_id: str | None = None
 
     model_config = {

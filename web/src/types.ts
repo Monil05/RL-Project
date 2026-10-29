@@ -45,6 +45,7 @@ export interface SimulationState {
   duration_seconds: number;
   seed: number;
   speed: number;
+  arrival_scale: number;
   step_index: number;
   vehicles_in_network: number | null;
   signal: {
@@ -60,6 +61,7 @@ export interface SimulationState {
   queue_lengths: Record<string, number>;
   departed: Vehicle[];
   departure_log: { step_index: number; departed: Vehicle[] }[];
+  phase_log: { step_index: number; phase: string; active_direction: string | null }[];
   metrics: Metrics | null;
   series: SeriesPoint[];
   agent: {

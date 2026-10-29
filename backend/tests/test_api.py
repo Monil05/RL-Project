@@ -45,6 +45,8 @@ def test_fixed_time_step_matches_environment():
         body = response.json()
         assert body["metrics"]["time"] == 1
         assert body["signal"]["phase"]
+        assert body["phase_log"][-1]["phase"] == body["signal"]["phase"]
+        assert body["phase_log"][-1]["step_index"] == 1
 
         simulation = replace(DEFAULT_CONFIG.simulation, duration_seconds=12, arrival_rates={"north": 0.10, "south": 0.10, "east": 0.10, "west": 0.10}, random_seed=42)
         config = replace(DEFAULT_CONFIG, simulation=simulation)
@@ -55,6 +57,32 @@ def test_fixed_time_step_matches_environment():
         assert body["metrics"]["throughput"] == environment.metrics()["throughput"]
         assert body["metrics"]["cumulative_reward"] == environment.metrics()["cumulative_reward"]
         assert body["vehicles_in_network"] == environment.total_queue_length()
+
+
+def test_arrival_scale_raises_live_demand_only():
+    from backend.app.services.config_factory import build_config
+
+    plain = build_config(scenario="medium", lane_count=2, free_left_turn=True, duration_seconds=12, seed=42)
+    busy = build_config(
+        scenario="medium",
+        lane_count=2,
+        free_left_turn=True,
+        duration_seconds=12,
+        seed=42,
+        arrival_scale=4,
+    )
+    assert plain.simulation.arrival_rates["north"] == 0.10
+    assert busy.simulation.arrival_rates["north"] == 0.40
+    assert busy.simulation.vehicles_per_green_step == plain.simulation.vehicles_per_green_step
+    with _client() as client:
+        rejected = client.post("/api/simulation/configure", json={"arrival_scale": 8})
+        assert rejected.status_code == 422
+        configured = client.post(
+            "/api/simulation/configure",
+            json={"algorithm": "Fixed Time", "scenario": "medium", "duration_seconds": 20, "seed": 1, "arrival_scale": 4},
+        )
+        assert configured.status_code == 200
+        assert configured.json()["arrival_scale"] == 4
 
 
 def test_start_pause_does_not_keep_stepping():

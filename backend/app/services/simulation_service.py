@@ -24,6 +24,7 @@ class SimulationService:
         self._free_left_turn = True
         self._duration_seconds = 300
         self._seed = 42
+        self._arrival_scale = 1.0
         self._agent_job_id: str | None = None
         self._config: ProjectConfig | None = None
         self._env: TrafficEnvironment | None = None
@@ -32,6 +33,7 @@ class SimulationService:
         self._step_index = 0
         self._series: list[dict] = []
         self._departure_log: list[dict] = []
+        self._phase_log: list[dict] = []
         self._dirty = True
         self._error: str | None = None
         self._agents = None
@@ -52,6 +54,7 @@ class SimulationService:
             free_left_turn=payload.free_left_turn,
             duration_seconds=payload.duration_seconds,
             seed=payload.seed,
+            arrival_scale=payload.arrival_scale,
         )
         with self._lock:
             structural_same = (
@@ -61,6 +64,7 @@ class SimulationService:
                 and payload.free_left_turn == self._free_left_turn
                 and payload.duration_seconds == self._duration_seconds
                 and payload.seed == self._seed
+                and payload.arrival_scale == self._arrival_scale
                 and payload.agent_job_id == self._agent_job_id
             )
             if not structural_same and self._status in ("running", "paused"):
@@ -77,6 +81,7 @@ class SimulationService:
             self._free_left_turn = payload.free_left_turn
             self._duration_seconds = payload.duration_seconds
             self._seed = payload.seed
+            self._arrival_scale = payload.arrival_scale
             self._agent_job_id = payload.agent_job_id
             self._dirty = True
             self._error = None
@@ -139,6 +144,7 @@ class SimulationService:
             free_left_turn=self._free_left_turn,
             duration_seconds=self._duration_seconds,
             seed=self._seed,
+            arrival_scale=self._arrival_scale,
         )
         controller, meta = self._resolve_controller(config)
         environment = TrafficEnvironment(config)
@@ -150,6 +156,7 @@ class SimulationService:
         self._step_index = 0
         self._series = []
         self._departure_log = []
+        self._phase_log = [_phase_entry(environment, 0)]
         self._dirty = False
 
     def _resolve_controller(self, config: ProjectConfig):
@@ -187,6 +194,8 @@ class SimulationService:
         departed = [_vehicle(vehicle) for vehicle in environment.last_departed_vehicles]
         self._departure_log.append({"step_index": self._step_index, "departed": departed})
         self._departure_log = self._departure_log[-40:]
+        self._phase_log.append(_phase_entry(environment, self._step_index))
+        self._phase_log = self._phase_log[-40:]
 
     def _snapshot_unlocked(self) -> dict:
         environment = self._env
@@ -220,6 +229,7 @@ class SimulationService:
             "duration_seconds": self._duration_seconds,
             "seed": self._seed,
             "speed": self._speed,
+            "arrival_scale": self._arrival_scale,
             "step_index": self._step_index,
             "vehicles_in_network": vehicles if metrics is not None else None,
             "signal": signal,
@@ -227,6 +237,7 @@ class SimulationService:
             "queue_lengths": {direction: len(queues[direction]) for direction in DIRECTIONS},
             "departed": departed,
             "departure_log": list(self._departure_log),
+            "phase_log": list(self._phase_log),
             "metrics": metrics,
             "series": list(self._series),
             "agent": self._agent_meta,
@@ -269,6 +280,14 @@ class SimulationService:
                     if self._env.time >= self._env.config.simulation.duration_seconds:
                         self._status = "completed"
             next_step_at = time.perf_counter() + max(0.05, 0.25 / max(speed, 0.25))
+
+
+def _phase_entry(environment: TrafficEnvironment, step_index: int) -> dict:
+    return {
+        "step_index": step_index,
+        "phase": environment.signal.current_phase.name,
+        "active_direction": environment.signal.active_direction,
+    }
 
 
 def _vehicle(vehicle: Vehicle) -> dict:
